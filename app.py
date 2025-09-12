@@ -1,5 +1,6 @@
 import os
 import time
+from datetime import datetime
 from flask import Flask, request, jsonify
 from openai import OpenAI
 import requests
@@ -17,14 +18,12 @@ GPT_MODEL = "gpt-4o"
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# --- [ใหม่] ระบบป้องกันสัญญาณซ้ำซ้อน (Deduplication Cache) ---
-# สร้าง "ความจำ" ให้เซิร์ฟเวอร์ เพื่อจำสัญญาณล่าสุดที่ได้รับ
+# --- ระบบป้องกันสัญญาณซ้ำซ้อน (Deduplication Cache) ---
 last_signal_cache = {
     "fingerprint": None,
     "timestamp": 0
 }
-# กำหนดช่วงเวลาที่จะถือว่าเป็นสัญญาณซ้ำ (เช่น 5 วินาที)
-DEDUPLICATION_WINDOW_SECONDS = 5
+DEDUPLICATION_WINDOW_SECONDS = 5 # ป้องกันสัญญาณซ้ำภายใน 5 วินาที
 # -------------------------------------------------------------
 
 @app.route('/webhook', methods=['POST'])
@@ -34,61 +33,60 @@ def webhook():
         
     data = request.json
     
-    # --- [ใหม่] ขั้นตอนการตรวจสอบและกรองสัญญาณซ้ำซ้อน ---
-    # 1. สร้าง "ลายนิ้วมือ" ที่ไม่ซ้ำกันสำหรับสัญญาณนี้โดยใช้ข้อมูลทั้งหมด
+    # --- ขั้นตอนการตรวจสอบและกรองสัญญาณซ้ำซ้อน ---
     current_fingerprint = str(data)
     current_timestamp = time.time()
 
-    # 2. ตรวจสอบกับ "ความจำ" ของเซิร์ฟเวอร์
     if (current_fingerprint == last_signal_cache["fingerprint"] and 
         current_timestamp - last_signal_cache["timestamp"] < DEDUPLICATION_WINDOW_SECONDS):
         
-        # 3. ถ้าเป็นสัญญาณซ้ำ ให้ตอบกลับว่า "ละเว้น" แล้วหยุดทำงานทันที
         print(f"Duplicate signal ignored: {current_fingerprint}")
-        return jsonify({"status": "🟡 Ignored", "message": "Duplicate signal received within the cooldown window."}), 200
+        return jsonify({"status": "🟡 Ignored", "message": "Duplicate signal."}), 200
 
-    # 4. ถ้าเป็นสัญญาณใหม่ ให้ "จดจำ" สัญญาณนี้ไว้ แล้วทำงานต่อ
     last_signal_cache["fingerprint"] = current_fingerprint
     last_signal_cache["timestamp"] = current_timestamp
     print(f"New signal received: {current_fingerprint}")
     # -------------------------------------------------------------
 
-    symbol = data.get("symbol", "ไม่มีข้อมูล")
+    symbol = data.get("symbol", "N/A")
     alerts = data.get("alerts", [])
-    tv_time = data.get("time", "ไม่มีข้อมูล")
+    # [แก้ไข] เปลี่ยนชื่อตัวแปร tv_time เป็น unix_timestamp เพื่อความชัดเจน
+    unix_timestamp = data.get("time", 0) 
 
     if not alerts:
-        return jsonify({"status": "❌ Error", "message": "No alerts data found in payload"}), 400
+        return jsonify({"status": "❌ Error", "message": "No alerts data found."}), 400
 
-    m5_alert = next((alert for alert in alerts if alert.get("timeframe") == "M5"), {})
-    signal_type = m5_alert.get("type", "Unknown Signal")
-
-    prompt = build_prompt(symbol, alerts, tv_time, signal_type)
+    prompt = build_prompt(symbol, alerts, unix_timestamp)
     gpt_reply = ask_gpt(prompt)
     send_telegram_message(gpt_reply)
 
     return jsonify({"status": "✅ Sent to Telegram", "GPT_Response": gpt_reply}), 200
 
-def build_prompt(symbol, alerts, time, signal_type):
+def build_prompt(symbol, alerts, unix_timestamp):
     alerts_by_tf = {alert.get("timeframe"): alert for alert in alerts}
 
     def extract_tf_data(tf):
         alert_data = alerts_by_tf.get(tf)
         if alert_data:
-            return f"""- ประเภท: {alert_data.get("type", "N/A")}
-- รูปแบบ: {alert_data.get("pattern", "N/A")}
-- ราคา: {alert_data.get("price", "N/A")}"""
+            return f"""- ประเภท: {alert_data.get("type", "N/A")} | รูปแบบ: {alert_data.get("pattern", "N/A")} | ราคา: {alert_data.get("price", "N/A")}"""
         return "ไม่มีข้อมูล"
         
-    # แปลง Unix timestamp จาก Pine Script (milliseconds) เป็นเวลาที่อ่านง่าย
+    # [แก้ไข] แก้ไขวิธีแปลงเวลาให้ถูกต้อง
     readable_time = "N/A"
-    if isinstance(time, (int, float)):
-        readable_time = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time / 1000))
+    if isinstance(unix_timestamp, (int, float)) and unix_timestamp > 0:
+        # แปลงจาก Milliseconds (จาก TradingView) เป็น Seconds
+        readable_time = datetime.fromtimestamp(unix_timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S')
 
+    m5_alert = alerts_by_tf.get("M5", {})
+    signal_type = m5_alert.get("type", "Unknown Signal")
+
+    # [ปรับปรุง] จัดระเบียบ Prompt ให้อ่านง่ายขึ้น
     return f"""ข้อมูลจาก TradingView:
 - สัญลักษณ์: {symbol}
 - เวลา: {readable_time}
 - ประเภทสัญญาณ: {signal_type}
+
+ข้อมูลประกอบการวิเคราะห์:
 - H1 Trend: {extract_tf_data("H1")}
 - M15 Setup: {extract_tf_data("M15")}
 - M5 Entry: {extract_tf_data("M5")}
@@ -115,8 +113,8 @@ def ask_gpt(prompt):
 - คำอธิบายเหตุผล 1–2 บรรทัด
 
 🕐 ระบุเวลาถือตามประเภท:
-- Scalp: 5–15 นาที
-- โครงสร้าง: 15–45 นาที
+- Scalp Signal: 5–15 นาที
+- Structure Signal: 15–45 นาที
 
 ❌ ห้ามเดา ❌ ห้ามชี้สัญญาณถ้าโครงสร้างยังไม่ชัด"""
     
@@ -130,8 +128,9 @@ def ask_gpt(prompt):
         )
         return response.choices[0].message.content
     except Exception as e:
-        print(f"[❌ GPT ERROR]: {str(e)}")
-        return f"[❌ GPT ERROR]: {str(e)}"
+        error_message = f"[❌ GPT ERROR]: {str(e)}"
+        print(error_message)
+        return error_message
 
 def send_telegram_message(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -142,5 +141,6 @@ def send_telegram_message(text):
         print(f"[❌ Telegram ERROR]: {str(e)}")
 
 if __name__ == '__main__':
+    # สำหรับ Production แนะนำให้ใช้ Gunicorn หรือ Waitress แทน
     app.run(host="0.0.0.0", port=10000, debug=False)
 
