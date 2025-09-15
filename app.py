@@ -55,7 +55,7 @@ def build_prompt_from_pine(data):
     symbol = data.get("symbol", "N/A")
     timestamp = data.get("timestamp", 0)
     signal = data.get("signal", {})
-    trade = data.get("trade_setup", {})
+    trade = data.get("trade_parameters", {})
     context = data.get("market_context", {})
     fundamentals = data.get("fundamentals", {})
     tech = data.get("technical_details", {})
