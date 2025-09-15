@@ -18,119 +18,94 @@ GPT_MODEL = "gpt-4o"
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# --- ระบบป้องกันสัญญาณซ้ำซ้อน (Deduplication Cache) ---
+# --- Deduplication ---
 last_signal_cache = {
     "fingerprint": None,
     "timestamp": 0
 }
-DEDUPLICATION_WINDOW_SECONDS = 5 # ป้องกันสัญญาณซ้ำภายใน 5 วินาที
-# -------------------------------------------------------------
+DEDUPLICATION_WINDOW_SECONDS = 5
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     if not request.is_json:
         return jsonify({"status": "❌ Error", "message": "Request must be JSON"}), 400
-        
+
     data = request.json
-    
-    # --- ขั้นตอนการตรวจสอบและกรองสัญญาณซ้ำซ้อน ---
+
     current_fingerprint = str(data)
     current_timestamp = time.time()
-
     if (current_fingerprint == last_signal_cache["fingerprint"] and 
         current_timestamp - last_signal_cache["timestamp"] < DEDUPLICATION_WINDOW_SECONDS):
-        
         print(f"Duplicate signal ignored: {current_fingerprint}")
         return jsonify({"status": "🟡 Ignored", "message": "Duplicate signal."}), 200
 
     last_signal_cache["fingerprint"] = current_fingerprint
     last_signal_cache["timestamp"] = current_timestamp
     print(f"New signal received: {current_fingerprint}")
-    # -------------------------------------------------------------
 
+    try:
+        prompt = build_prompt_from_pine(data)
+        gpt_reply = ask_gpt(prompt)
+        send_telegram_message(gpt_reply)
+        return jsonify({"status": "✅ Sent to Telegram", "GPT_Response": gpt_reply}), 200
+    except Exception as e:
+        return jsonify({"status": "❌ Error", "message": str(e)}), 500
+
+def build_prompt_from_pine(data):
     symbol = data.get("symbol", "N/A")
-    alerts = data.get("alerts", [])
-    # [แก้ไข] เปลี่ยนชื่อตัวแปร tv_time เป็น unix_timestamp เพื่อความชัดเจน
-    unix_timestamp = data.get("time", 0) 
+    timestamp = data.get("timestamp", 0)
+    signal = data.get("signal", {})
+    trade = data.get("trade_setup", {})
+    context = data.get("market_context", {})
+    fundamentals = data.get("fundamentals", {})
+    tech = data.get("technical_details", {})
 
-    if not alerts:
-        return jsonify({"status": "❌ Error", "message": "No alerts data found."}), 400
-
-    prompt = build_prompt(symbol, alerts, unix_timestamp)
-    gpt_reply = ask_gpt(prompt)
-    send_telegram_message(gpt_reply)
-
-    return jsonify({"status": "✅ Sent to Telegram", "GPT_Response": gpt_reply}), 200
-
-def build_prompt(symbol, alerts, unix_timestamp):
-    alerts_by_tf = {alert.get("timeframe"): alert for alert in alerts}
-
-    def extract_tf_data(tf):
-        alert_data = alerts_by_tf.get(tf)
-        if alert_data:
-            return f"""- ประเภท: {alert_data.get("type", "N/A")} | รูปแบบ: {alert_data.get("pattern", "N/A")} | ราคา: {alert_data.get("price", "N/A")}"""
-        return "ไม่มีข้อมูล"
-        
-    # [แก้ไข] แก้ไขวิธีแปลงเวลาให้ถูกต้อง
     readable_time = "N/A"
-    if isinstance(unix_timestamp, (int, float)) and unix_timestamp > 0:
-        # แปลงจาก Milliseconds (จาก TradingView) เป็น Seconds
-        readable_time = datetime.fromtimestamp(unix_timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S')
+    if isinstance(timestamp, (int, float)) and timestamp > 0:
+        readable_time = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
 
-    m5_alert = alerts_by_tf.get("M5", {})
-    signal_type = m5_alert.get("type", "Unknown Signal")
+    return f"""
+📡 สัญญาณจาก Gold Pro System
 
-    # [ปรับปรุง] จัดระเบียบ Prompt ให้อ่านง่ายขึ้น
-    return f"""ข้อมูลจาก TradingView:
 - สัญลักษณ์: {symbol}
 - เวลา: {readable_time}
-- ประเภทสัญญาณ: {signal_type}
+- กลยุทธ์: {signal.get('strategy')} | ทิศทาง: {signal.get('direction')}
+- เหตุผล: {signal.get('reason')}
+- ความมั่นใจ: {signal.get('confidence')}%
 
-ข้อมูลประกอบการวิเคราะห์:
-- H1 Trend: {extract_tf_data("H1")}
-- M15 Setup: {extract_tf_data("M15")}
-- M5 Entry: {extract_tf_data("M5")}
+🎯 จุดเข้า: {trade.get('entry')} | SL: {trade.get('stop_loss')} | TP: {trade.get('take_profit')}
+- RR: {trade.get('risk_reward')} | Pip Risk: {trade.get('pip_risk')} | Size: {trade.get('position_size')}
+
+📊 Context:
+- เทรนด์ H1: {context.get('h1_trend')} ({context.get('trend_strength')})
+- Session: {context.get('session')}
+- RSI M15: {context.get('rsi_m15')} | Vol Ratio: {context.get('volatility_ratio')}
+
+📉 Fundamentals:
+- DXY: Bearish={fundamentals.get('dxy_bearish')} | Bullish={fundamentals.get('dxy_bullish')}
+- Yield: Falling={fundamentals.get('yield_falling')} | Rising={fundamentals.get('yield_rising')}
+- VIX: {fundamentals.get('vix_level')}
+
+🔎 แนวรับ/ต้าน:
+- EMA50/200 H1: {tech.get('ema50_h1')} / {tech.get('ema200_h1')}
+- Support: {tech.get('support')} | Resistance: {tech.get('resistance')}
 """
 
 def ask_gpt(prompt):
-    system_prompt = """คุณคือ GoldScalpGPT — ผู้ช่วยเทรด XAU/USD แบบมืออาชีพ ด้วยกลยุทธ์ที่ใช้การวิเคราะห์ Timeframe H1, M15, M5 เพื่อหาจุดเข้าออกที่ปลอดภัยที่สุด:
-
-🔁 กรอบการวิเคราะห์:
-- H1 = เทรนด์หลัก (Trend)
-- M15 = โครงสร้างการตั้งค่า (Setup)
-- M5 = จุดเข้า (Entry Confirmation)
-
-📊 สิ่งที่ต้องวิเคราะห์:
-- มี trap หรือ wick ยาวผิดปกติไหม?
-- มีการ fake breakout, stop hunt, หรือ liquidity grab หรือไม่?
-- มีแรง reject ที่ zone supply/demand หรือไม่?
-- ราคาเบรกแนวไหนแล้วยังไม่มี follow-through หรือไม่?
-
-✅ ถ้าเห็นว่าพร้อมเข้าออเดอร์:
-- ให้คำตอบสั้น ๆ: BUY หรือ SELL
-- บอกราคาเข้า (Entry Price) ที่แนะนำ
-- บอก SL และ TP โดยประมาณ เช่น SL = xxx, TP1 = xxx, TP2 = xxx
-- คำอธิบายเหตุผล 1–2 บรรทัด
-
-🕐 ระบุเวลาถือตามประเภท:
-- Scalp Signal: 5–15 นาที
-- Structure Signal: 15–45 นาที
-
-❌ ห้ามเดา ❌ ห้ามชี้สัญญาณถ้าโครงสร้างยังไม่ชัด"""
-    
-    try:
-        response = client.chat.completions.create(
-            model=GPT_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ]
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        error_message = f"[❌ GPT ERROR]: {str(e)}"
-        print(error_message)
-        return error_message
+    system_prompt = """คุณคือ GoldScalpGPT — ผู้ช่วยเทรด XAU/USD มืออาชีพ:
+- วิเคราะห์ H1 = เทรนด์ / M15 = Setup / M5 = Entry
+- ห้ามเดา ห้ามชี้สัญญาณถ้าโครงสร้างยังไม่ชัด
+- ถ้าพร้อมเข้าออเดอร์: ระบุ BUY หรือ SELL พร้อม Entry, SL, TP1, TP2
+- บอกเหตุผล และระยะเวลาถือคร่าว ๆ
+"""
+    response = client.chat.completions.create(
+        model=GPT_MODEL,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    return response.choices[0].message.content
 
 def send_telegram_message(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -141,6 +116,4 @@ def send_telegram_message(text):
         print(f"[❌ Telegram ERROR]: {str(e)}")
 
 if __name__ == '__main__':
-    # สำหรับ Production แนะนำให้ใช้ Gunicorn หรือ Waitress แทน
     app.run(host="0.0.0.0", port=10000, debug=False)
-
