@@ -57,44 +57,61 @@ def build_prompt_from_pine(data):
     signal = data.get("signal", {})
     trade = data.get("trade_parameters", {})
     context = data.get("market_context", {})
-    fundamentals = data.get("fundamentals", {})
-    tech = data.get("technical_details", {})
+    tech = data.get("technical_analysis", {})
+    confidence_score = data.get("confidence_score", "N/A")
+    risk = data.get("risk_assessment", {})
+    metadata = data.get("metadata", {})
 
     readable_time = "N/A"
     if isinstance(timestamp, (int, float)) and timestamp > 0:
-        readable_time = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+        readable_time = datetime.fromtimestamp(timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S')
 
     return f"""
-📊 บริบทการเทรดทองคำจาก Pine Script
+📊 ข้อมูลวิเคราะห์จาก Pine Script สำหรับทองคำ (XAU/USD)
 
+🕒 เวลา: {readable_time}
 สัญลักษณ์: {symbol}
-เวลา: {readable_time}
-กลยุทธ์: {signal.get('strategy')} | ทิศทาง: {signal.get('direction')} | ความมั่นใจ: {signal.get('confidence')}%
-เหตุผลเบื้องต้น: {signal.get('reason')}
+กลยุทธ์: {signal.get("strategy")} | ประเภท: {signal.get("type")} | เหตุผล: {signal.get("reason")}
+Confidence Score: {confidence_score}%
 
-📈 ราคาที่เสนอเข้า: {trade.get('entry')} | SL เบื้องต้น: {trade.get('stop_loss')} | TP กลาง: {trade.get('take_profit')}
-RR: {trade.get('risk_reward')} | Pip Risk: {trade.get('pip_risk')} | ขนาดล็อต: {trade.get('position_size')}
+🎯 Trade Plan
+- Entry: {trade.get("entry")}
+- SL: {trade.get("sl")}
+- TP: {trade.get("tp")}
+- RR Ratio: {trade.get("rr_ratio")}
+- Pip Risk: {trade.get("pip_risk")}
+- Risk %: {trade.get("risk_pct")}
 
-🧠 บริบทตลาด:
-- ช่วงเวลา: {context.get('session')} | เทรนด์ H1: {context.get('h1_trend')} | ความแรงเทรนด์: {context.get('trend_strength')}
-- RSI M15: {context.get('rsi_m15')} | ความผันผวน: {context.get('volatility_ratio')}
+📉 Market Context
+- H1 เทรนด์: {context.get("h1_trend")} ({context.get("trend_strength")})
+- EMA50 H1: {context.get("ema50_h1")}, EMA200 H1: {context.get("ema200_h1")}
+- EMA Distance: 50={context.get("ema50_distance")}, 200={context.get("ema200_distance")}
+- ATR M15: {context.get("atr_m15")} | Volatility: {context.get("volatility_percentile")}%
+- RSI M15: {context.get("rsi_m15")}
+- Pattern M5: {context.get("m5_pattern")}
+- Session: {context.get("trading_session")}
+- Pullback Depth: {context.get("pullback_depth")}
+- Support: {context.get("support_level")}, Resistance: {context.get("resistance_level")}
 
-📉 ปัจจัยพื้นฐาน:
-- DXY: Bearish={fundamentals.get('dxy_bearish')} / Bullish={fundamentals.get('dxy_bullish')}
-- Bond Yield: Fall={fundamentals.get('yield_falling')} / Rise={fundamentals.get('yield_rising')}
-- VIX: {fundamentals.get('vix_level')}
+📌 Technical
+- Divergence: {tech.get("divergence_present")} ({tech.get("divergence_type")})
+- BB Position: {tech.get("bb_position")}
+- Price vs EMA50: {tech.get("price_vs_ema50")}
+- Volatility Regime: {tech.get("volatility_regime")}
+- Confluence Factors: {tech.get("confluence_factors")}
 
-📐 โซนเทคนิค:
-- EMA50/200 H1: {tech.get('ema50_h1')} / {tech.get('ema200_h1')}
-- แนวรับ: {tech.get('support')} | แนวต้าน: {tech.get('resistance')}
+📊 Risk Assessment
+- Session Quality: {risk.get("session_quality")}
+- Trend Alignment: {risk.get("trend_alignment")}
+- Volatility Favorable: {risk.get("volatility_favorable")}
 
-กรุณาวิเคราะห์จากข้อมูลข้างต้น:
-- บอกว่าเข้าออเดอร์ได้ไหม หรือควรรอก่อน
-- ถ้าเข้าได้: กำหนด Entry, SL, TP1, TP2 ที่เหมาะสมจากโครงสร้างจริง (ไม่อิง RR อย่างเดียว)
-- ให้ SL วางนอก zone ที่อาจโดน trap/wick
-- TP1 เน้นปลอดภัย | TP2 ใช้ momentum ถ้าทางโล่ง
-- เตือนถ้ามีโซนอันตราย เช่น fakeout, trap, RSI กลาง, vol ต่ำ, ชนโซนสำคัญ
-- ระบุเวลาในการถือโดยประมาณ
+🧠 บทบาทของคุณ:
+- วิเคราะห์ว่าควรเข้าออเดอร์ไหม
+- ถ้าเข้า: ให้ Entry, SL, TP1, TP2 ตามโครงสร้างจริง
+- อย่าตั้ง SL/TP จาก RR อย่างเดียว ให้อิงแนวรับแนวต้าน
+- เน้น TP1 ปลอดภัย, TP2 ใช้ momentum
+- เตือนถ้ามีสัญญาณเสี่ยง เช่น wick trap, sideway, vol ต่ำ
+- บอกด้วยว่าเป็น scalp หรือ hold กี่นาที
 """
 
 def ask_gpt(prompt):
