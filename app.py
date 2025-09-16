@@ -29,10 +29,10 @@ DEDUPLICATION_WINDOW_SECONDS = 5
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        data = request.get_json(silent=True)
-        if data is None:
-            raise ValueError("Request body is not valid JSON")
-
+        # ใช้วิธีนี้เพื่อรองรับ Content-Type: text/plain จาก TradingView
+        raw_data = request.get_data(as_text=True)
+        data = json.loads(raw_data)
+        
     except Exception as e:
         app.logger.error(f"Error parsing JSON from request body: {e}")
         app.logger.error(f"Received raw data: {request.get_data(as_text=True)}")
@@ -65,12 +65,10 @@ def build_prompt_from_pine(data):
     signal = data.get("signal", {})
     trade = data.get("trade_parameters", {})
     context = data.get("market_context", {})
-    structure = data.get("market_structure", {}) # <-- ดึงข้อมูล Market Structure
+    structure = data.get("market_structure", {})
     tech = data.get("technical_analysis", {})
     confidence_score = data.get("confidence_score", "N/A")
     
-    readable_time = datetime.fromtimestamp(timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S') if timestamp > 0 else "N/A"
-
     # สร้าง Prompt ที่ส่งข้อมูลทั้งหมดให้ AI
     return f"""
 📊 **ข้อมูลดิบ:**
@@ -127,7 +125,7 @@ def send_telegram_message(text):
     except Exception as e:
         app.logger.error(f"[❌ Telegram ERROR]: {str(e)}")
 
-# บรรทัดนี้สำหรับทดสอบ Log ว่าทำงานได้ปกติ
+# Route สำหรับทดสอบว่าระบบ Log ทำงานได้ปกติ
 @app.route('/')
 def hello():
     app.logger.info("Hello, Render! Logging test successful.")
