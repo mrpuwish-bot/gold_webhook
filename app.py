@@ -57,20 +57,18 @@ def webhook():
         return jsonify({"status": "❌ Error", "message": str(e)}), 500
 
 def build_prompt_from_pine(data):
-    # ดึงข้อมูลทั้งหมด รวมถึง Market Structure ที่เพิ่มเข้ามาใหม่
     symbol = data.get("symbol", "N/A")
     timestamp = data.get("timestamp", 0)
     signal = data.get("signal", {})
     trade = data.get("trade_parameters", {})
     context = data.get("market_context", {})
-    structure = data.get("market_structure", {}) # <-- ดึงข้อมูล Market Structure
+    structure = data.get("market_structure", {})
     tech = data.get("technical_analysis", {})
     confidence_score = data.get("confidence_score", "N/A")
     risk = data.get("risk_assessment", {})
     
     readable_time = datetime.fromtimestamp(timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S') if timestamp > 0 else "N/A"
 
-    # สร้าง Prompt ที่ส่งข้อมูลสำคัญทั้งหมดให้ AI
     return f"""
 📊 **ข้อมูลดิบ:**
 - **สัญญาณ:** {signal.get("strategy")} {signal.get("type")}, Conf: {confidence_score}%
@@ -119,7 +117,7 @@ def ask_gpt(prompt):
     return response.choices[0].message.content
 
 def send_telegram_message(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = f"https.api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
     try:
         requests.post(url, json=payload)
@@ -127,4 +125,4 @@ def send_telegram_message(text):
         print(f"[❌ Telegram ERROR]: {str(e)}")
 
 if __name__ == '__main__':
-    app.run(host="host="0.0.0.0", port=10000, debug=False)
+    app.run(host="0.0.0.0", port=10000, debug=False)
