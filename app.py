@@ -57,6 +57,7 @@ def webhook():
         return jsonify({"status": "❌ Error", "message": str(e)}), 500
 
 def build_prompt_from_pine(data):
+    # ส่งข้อมูลทั้งหมดให้ AI เพื่อการวิเคราะห์ที่สมบูรณ์
     symbol = data.get("symbol", "N/A")
     timestamp = data.get("timestamp", 0)
     signal = data.get("signal", {})
@@ -65,74 +66,39 @@ def build_prompt_from_pine(data):
     tech = data.get("technical_analysis", {})
     confidence_score = data.get("confidence_score", "N/A")
     risk = data.get("risk_assessment", {})
-    metadata = data.get("metadata", {})
-
-    readable_time = "N/A"
-    if isinstance(timestamp, (int, float)) and timestamp > 0:
-        readable_time = datetime.fromtimestamp(timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S')
+    
+    readable_time = datetime.fromtimestamp(timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S') if timestamp > 0 else "N/A"
 
     return f"""
-📊 ข้อมูลวิเคราะห์จาก Pine Script สำหรับทองคำ (XAU/USD)
+📊 **ข้อมูลดิบ:**
+- **สัญญาณ:** {signal.get("strategy")} {signal.get("type")}, Conf: {confidence_score}%
+- **เทรนด์ H1:** {context.get("h1_trend")} ({context.get("trend_strength")})
+- **รูปแบบ M5:** {context.get("m5_pattern")}
+- **Session:** {context.get("trading_session")}
+- **Volatility:** {context.get("volatility_percentile")}%
+- **RSI M15:** {context.get("rsi_m15")}
+- **ราคาเริ่มต้น:** Entry: {trade.get("entry")}, SL: {trade.get("sl")}, TP: {trade.get("tp")}
 
-🕒 เวลา: {readable_time}
-สัญลักษณ์: {symbol}
-กลยุทธ์: {signal.get("strategy")} | ประเภท: {signal.get("type")} | เหตุผล: {signal.get("reason")}
-Confidence Score: {confidence_score}%
-
-🎯 Trade Plan
-- Entry: {trade.get("entry")}
-- SL: {trade.get("sl")}
-- TP: {trade.get("tp")}
-- RR Ratio: {trade.get("rr_ratio")}
-- Pip Risk: {trade.get("pip_risk")}
-- Risk %: {trade.get("risk_pct")}
-
-📉 Market Context
-- H1 เทรนด์: {context.get("h1_trend")} ({context.get("trend_strength")})
-- EMA50 H1: {context.get("ema50_h1")}, EMA200 H1: {context.get("ema200_h1")}
-- EMA Distance: 50={context.get("ema50_distance")}, 200={context.get("ema200_distance")}
-- ATR M15: {context.get("atr_m15")} | Volatility: {context.get("volatility_percentile")}%
-- RSI M15: {context.get("rsi_m15")}
-- Pattern M5: {context.get("m5_pattern")}
-- Session: {context.get("trading_session")}
-- Pullback Depth: {context.get("pullback_depth")}
-- Support: {context.get("support_level")}, Resistance: {context.get("resistance_level")}
-
-📌 Technical
-- Divergence: {tech.get("divergence_present")} ({tech.get("divergence_type")})
-- BB Position: {tech.get("bb_position")}
-- Price vs EMA50: {tech.get("price_vs_ema50")}
-- Volatility Regime: {tech.get("volatility_regime")}
-- Confluence Factors: {tech.get("confluence_factors")}
-
-📊 Risk Assessment
-- Session Quality: {risk.get("session_quality")}
-- Trend Alignment: {risk.get("trend_alignment")}
-- Volatility Favorable: {risk.get("volatility_favorable")}
-
-🧠 บทบาทของคุณ:
-- วิเคราะห์ว่าควรเข้าออเดอร์ไหม
-- ถ้าเข้า: ให้ Entry, SL, TP1, TP2 ตามโครงสร้างจริง
-- อย่าตั้ง SL/TP จาก RR อย่างเดียว ให้อิงแนวรับแนวต้าน
-- เน้น TP1 ปลอดภัย, TP2 ใช้ momentum
-- เตือนถ้ามีสัญญาณเสี่ยง เช่น wick trap, sideway, vol ต่ำ
-- บอกด้วยว่าเป็น scalp หรือ hold กี่นาที
+🧠 **ภารกิจ:**
+วิเคราะห์ข้อมูลทั้งหมด แล้วสรุปเป็นบทวิเคราะห์ที่กระชับและแผนการเทรดที่ชัดเจน ตามรูปแบบของ System Prompt
 """
 
 def ask_gpt(prompt):
     system_prompt = """
-คุณคือ GoldScalpGPT — ผู้ช่วยวิเคราะห์ทองคำแบบมืออาชีพ (XAU/USD) โดยใช้ 3 ไทม์เฟรม:
-- H1: เทรนด์หลัก
-- M15: โครงสร้างการตั้งค่า
-- M5: การยืนยันจุดเข้า
+คุณคือ GoldScalpGPT — **นักวิเคราะห์และวางแผนกลยุทธ์** ที่เชี่ยวชาญทองคำ หน้าที่ของคุณคือวิเคราะห์ข้อมูลที่ได้รับ แล้วสรุปออกมาให้ **กระชับและเข้าใจง่ายที่สุด** สำหรับเทรดเดอร์มืออาชีพ
 
-หน้าที่ของคุณ:
-- วิเคราะห์ข้อมูลจากระบบ Pine Script ที่คัดกรองแล้ว
-- ถ้าโครงสร้างพร้อม ให้ระบุ: เข้า BUY หรือ SELL
-- กำหนด Entry, SL, TP1, TP2 อย่างมีเหตุผลตามโครงสร้างจริง
-- ถ้าไม่พร้อม ให้บอกว่า WAIT พร้อมอธิบายสั้น ๆ
-- อย่าเดา อย่า over-optimize
-- ตอบให้มืออาชีพอ่านเข้าใจง่าย รัดกุม ไม่ขายฝัน
+**รูปแบบการตอบที่ต้องใช้เท่านั้น:**
+
+1.  **[อีโมจิสถานะ] สรุป (Executive Summary):** 1 ประโยคจบ บอกภาพรวมของสัญญาณ
+2.  **✅ ปัจจัยสนับสนุน (Pros):** (ลิสต์เป็นข้อๆ ไม่เกิน 2 ข้อ)
+3.  **⚠️ ข้อควรระวัง (Cons):** (ลิสต์เป็นข้อๆ ไม่เกิน 2 ข้อ)
+4.  **🎯 แผนการเทรด (Plan):**
+    - Entry: [ราคา]
+    - SL: [ราคา]
+    - TP1: [ราคา]
+    - TP2: [ราคา]
+
+**สำคัญ:** ต้องตอบเป็นภาษาไทยและอยู่ในรูปแบบนี้เท่านั้น ห้ามมีประโยคสนทนาอื่นๆ
 """
 
     response = client.chat.completions.create(
