@@ -1,6 +1,6 @@
 import os
 import time
-import json # <-- 1. เพิ่มการ import json
+import json
 from datetime import datetime
 from flask import Flask, request, jsonify
 from openai import OpenAI
@@ -28,19 +28,14 @@ DEDUPLICATION_WINDOW_SECONDS = 5
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    # --- 2. แก้ไขส่วนการรับข้อมูลให้ยืดหยุ่นขึ้น ---
     try:
-        # รับข้อมูลดิบ (raw body) ที่เป็น text แล้วแปลงเป็น JSON ด้วยตัวเอง
         raw_data = request.get_data(as_text=True)
         data = json.loads(raw_data)
     except Exception as e:
-        # ถ้าแปลงไม่ได้ แสดงว่าข้อมูลที่ส่งมาไม่ใช่ JSON จริงๆ
         print(f"Error parsing JSON from request body: {e}")
-        print(f"Received raw data: {request.get_data(as_text=True)}") # แสดงข้อมูลดิบที่ได้รับเพื่อ debug
+        print(f"Received raw data: {request.get_data(as_text=True)}")
         return jsonify({"status": "❌ Error", "message": "Failed to parse JSON body"}), 400
-    # --- จบส่วนที่แก้ไข ---
 
-    # ส่วนที่เหลือของโค้ดทำงานเหมือนเดิม
     current_fingerprint = str(data)
     current_timestamp = time.time()
     if (current_fingerprint == last_signal_cache["fingerprint"] and
@@ -58,7 +53,7 @@ def webhook():
         send_telegram_message(gpt_reply)
         return jsonify({"status": "✅ Sent to Telegram", "GPT_Response": gpt_reply}), 200
     except Exception as e:
-        print(f"An error occurred during processing: {e}") # เพิ่มการ print error เพื่อให้ debug ง่ายขึ้น
+        print(f"An error occurred during processing: {e}")
         return jsonify({"status": "❌ Error", "message": str(e)}), 500
 
 def build_prompt_from_pine(data):
