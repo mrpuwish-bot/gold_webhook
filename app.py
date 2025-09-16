@@ -1,14 +1,21 @@
 import os
 import time
 import json
+import logging
 from datetime import datetime
 from flask import Flask, request, jsonify
 from openai import OpenAI
 import requests
 from dotenv import load_dotenv
 
+# --- SETUP ---
+# Load environment variables
 load_dotenv()
 
+# Configure logging to be more informative
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# --- INITIALIZE FLASK APP AND SERVICES ---
 app = Flask(__name__)
 
 # --- CONFIGURATION ---
@@ -17,59 +24,78 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GPT_MODEL = "gpt-4o"
 
+# Initialize OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# --- Deduplication ---
+# --- CACHE FOR DEDUPLICATION ---
 last_signal_cache = {
     "fingerprint": None,
     "timestamp": 0
 }
-DEDUPLICATION_WINDOW_SECONDS = 5
+DEDUPLICATION_WINDOW_SECONDS = 5 # Ignore identical signals within 5 seconds
 
+# ==============================================================================
+# === MAIN WEBHOOK ENDPOINT ====================================================
+# ==============================================================================
 @app.route('/webhook', methods=['POST'])
 def webhook():
+    """Receives, processes, and acts on signals from TradingView."""
+    
+    # ✅ UPGRADE: More robust error handling for JSON parsing
+    raw_data = request.get_data(as_text=True)
     try:
-        # ใช้วิธีนี้เพื่อรองรับ Content-Type: text/plain จาก TradingView
-        raw_data = request.get_data(as_text=True)
+        # Attempt to parse the incoming text as JSON
         data = json.loads(raw_data)
-        
-    except Exception as e:
-        app.logger.error(f"Error parsing JSON from request body: {e}")
-        app.logger.error(f"Received raw data: {request.get_data(as_text=True)}")
-        return jsonify({"status": "❌ Error", "message": "Failed to parse JSON body"}), 400
+    except json.JSONDecodeError as e:
+        # This block now ONLY catches errors from malformed JSON
+        logging.error("🔴 JSON DECODE ERROR: %s", e.msg)
+        logging.error("   Error at Line: %d, Column: %d", e.lineno, e.colno)
+        logging.error("   Received Raw Data: %s", raw_data)
+        return jsonify({
+            "status": "❌ Error", 
+            "message": "Failed to parse JSON body.",
+            "error_details": f"{e.msg} (at line {e.lineno} col {e.colno})"
+        }), 400
 
+    # --- Deduplication Logic (No changes) ---
     current_fingerprint = str(data)
     current_timestamp = time.time()
+    
     if (current_fingerprint == last_signal_cache["fingerprint"] and
         current_timestamp - last_signal_cache["timestamp"] < DEDUPLICATION_WINDOW_SECONDS):
-        app.logger.info(f"Duplicate signal ignored: {current_fingerprint}")
+        logging.info("🟡 Duplicate signal ignored: %s", current_fingerprint)
         return jsonify({"status": "🟡 Ignored", "message": "Duplicate signal."}), 200
 
+    # Update cache with the new signal
     last_signal_cache["fingerprint"] = current_fingerprint
     last_signal_cache["timestamp"] = current_timestamp
-    app.logger.info(f"New signal received: {current_fingerprint}")
+    logging.info("✅ New signal received: %s", json.dumps(data, indent=2))
 
+    # --- Main Processing Logic (No changes) ---
     try:
         prompt = build_prompt_from_pine(data)
         gpt_reply = ask_gpt(prompt)
         send_telegram_message(gpt_reply)
+        logging.info("✅ Signal successfully processed and sent to Telegram.")
         return jsonify({"status": "✅ Sent to Telegram", "GPT_Response": gpt_reply}), 200
     except Exception as e:
-        app.logger.error(f"An error occurred during processing: {e}")
+        # Catch any other unexpected errors during processing
+        logging.error("🔴 An unexpected error occurred during processing: %s", e, exc_info=True)
         return jsonify({"status": "❌ Error", "message": str(e)}), 500
 
+# ==============================================================================
+# === HELPER FUNCTIONS (No changes) ============================================
+# ==============================================================================
+
 def build_prompt_from_pine(data):
-    # ดึงข้อมูลทั้งหมด รวมถึง Market Structure
+    """Constructs a detailed prompt for OpenAI based on the received signal data."""
     symbol = data.get("symbol", "N/A")
-    timestamp = data.get("timestamp", 0)
     signal = data.get("signal", {})
     trade = data.get("trade_parameters", {})
     context = data.get("market_context", {})
     structure = data.get("market_structure", {})
-    tech = data.get("technical_analysis", {})
     confidence_score = data.get("confidence_score", "N/A")
     
-    # สร้าง Prompt ที่ส่งข้อมูลทั้งหมดให้ AI
     return f"""
 📊 **ข้อมูลดิบ:**
 - **สัญญาณ:** {signal.get("strategy")} {signal.get("type")}, Conf: {confidence_score}%
@@ -91,6 +117,7 @@ def build_prompt_from_pine(data):
 """
 
 def ask_gpt(prompt):
+    """Sends the prompt to OpenAI and returns the response."""
     system_prompt = """
 คุณคือ GoldScalpGPT — **นักวิเคราะห์และวางแผนกลยุทธ์** ที่เชี่ยวชาญทองคำ หน้าที่ของคุณคือวิเคราะห์ข้อมูลที่ได้รับทั้งหมด แล้วสรุปออกมาให้ **กระชับและเข้าใจง่ายที่สุด** สำหรับเทรดเดอร์มืออาชีพ
 
@@ -107,7 +134,6 @@ def ask_gpt(prompt):
 
 **สำคัญ:** ต้องตอบเป็นภาษาไทยและอยู่ในรูปแบบนี้เท่านั้น **ต้องใช้ข้อมูล 'โครงสร้างตลาด' (PDH/PDL/Swings) ในการกำหนด SL และ TP ใหม่เสมอ ห้ามคัดลอกแผนการเทรดจากข้อมูลดิบ**
 """
-
     response = client.chat.completions.create(
         model=GPT_MODEL,
         messages=[
@@ -118,19 +144,26 @@ def ask_gpt(prompt):
     return response.choices[0].message.content
 
 def send_telegram_message(text):
+    """Sends the formatted message to the specified Telegram chat."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
     try:
-        requests.post(url, json=payload)
-    except Exception as e:
-        app.logger.error(f"[❌ Telegram ERROR]: {str(e)}")
+        response = requests.post(url, json=payload)
+        response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+    except requests.exceptions.RequestException as e:
+        logging.error("🔴 Telegram API ERROR: %s", e)
 
-# Route สำหรับทดสอบว่าระบบ Log ทำงานได้ปกติ
+# ==============================================================================
+# === APP ROUTES & RUNNER ======================================================
+# ==============================================================================
 @app.route('/')
 def hello():
-    app.logger.info("Hello, Render! Logging test successful.")
-    return "Hello, Render! Logging test successful."
+    """A simple route to confirm the server is running."""
+    logging.info("Health check successful.")
+    return "Hello, Render! The webhook server is running."
 
-# บล็อกสำหรับรัน Server ต้องอยู่ท้ายสุดของไฟล์เสมอ
+# This block is essential for running the app, especially in production environments
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=10000, debug=False)
+    # Use environment variable for port, with a default for local testing
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port, debug=False)
