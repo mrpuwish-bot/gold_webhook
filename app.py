@@ -41,13 +41,10 @@ DEDUPLICATION_WINDOW_SECONDS = 5 # Ignore identical signals within 5 seconds
 def webhook():
     """Receives, processes, and acts on signals from TradingView."""
     
-    # ✅ UPGRADE: More robust error handling for JSON parsing
     raw_data = request.get_data(as_text=True)
     try:
-        # Attempt to parse the incoming text as JSON
         data = json.loads(raw_data)
     except json.JSONDecodeError as e:
-        # This block now ONLY catches errors from malformed JSON
         logging.error("🔴 JSON DECODE ERROR: %s", e.msg)
         logging.error("   Error at Line: %d, Column: %d", e.lineno, e.colno)
         logging.error("   Received Raw Data: %s", raw_data)
@@ -57,7 +54,7 @@ def webhook():
             "error_details": f"{e.msg} (at line {e.lineno} col {e.colno})"
         }), 400
 
-    # --- Deduplication Logic (No changes) ---
+    # --- Deduplication Logic ---
     current_fingerprint = str(data)
     current_timestamp = time.time()
     
@@ -66,12 +63,12 @@ def webhook():
         logging.info("🟡 Duplicate signal ignored: %s", current_fingerprint)
         return jsonify({"status": "🟡 Ignored", "message": "Duplicate signal."}), 200
 
-    # Update cache with the new signal
+    # Update cache
     last_signal_cache["fingerprint"] = current_fingerprint
     last_signal_cache["timestamp"] = current_timestamp
     logging.info("✅ New signal received: %s", json.dumps(data, indent=2))
 
-    # --- Main Processing Logic (No changes) ---
+    # --- Main Processing Logic ---
     try:
         prompt = build_prompt_from_pine(data)
         gpt_reply = ask_gpt(prompt)
@@ -79,12 +76,11 @@ def webhook():
         logging.info("✅ Signal successfully processed and sent to Telegram.")
         return jsonify({"status": "✅ Sent to Telegram", "GPT_Response": gpt_reply}), 200
     except Exception as e:
-        # Catch any other unexpected errors during processing
         logging.error("🔴 An unexpected error occurred during processing: %s", e, exc_info=True)
         return jsonify({"status": "❌ Error", "message": str(e)}), 500
 
 # ==============================================================================
-# === HELPER FUNCTIONS (No changes) ============================================
+# === HELPER FUNCTIONS =========================================================
 # ==============================================================================
 
 def build_prompt_from_pine(data):
@@ -118,12 +114,13 @@ def build_prompt_from_pine(data):
 
 def ask_gpt(prompt):
     """Sends the prompt to OpenAI and returns the response."""
+    # ✅ UPGRADE: Made the instructions for the first line more specific and clear.
     system_prompt = """
 คุณคือ GoldScalpGPT — **นักวิเคราะห์และวางแผนกลยุทธ์** ที่เชี่ยวชาญทองคำ หน้าที่ของคุณคือวิเคราะห์ข้อมูลที่ได้รับทั้งหมด แล้วสรุปออกมาให้ **กระชับและเข้าใจง่ายที่สุด** สำหรับเทรดเดอร์มืออาชีพ
 
 **รูปแบบการตอบที่ต้องใช้เท่านั้น:**
 
-1.  **[อีโมจิสถานะ] สรุป (Executive Summary):** 1 ประโยคจบ บอกภาพรวมของสัญญาณ
+1.  **[อีโมจิสัญญาณ] ประเภทสัญญาณ | [BUY/SELL] ด้วยกลยุทธ์ [ชื่อกลยุทธ์]:** สรุปภาพรวมของสัญญาณ 1 ประโยค
 2.  **✅ ปัจจัยสนับสนุน (Pros):** (ลิสต์เป็นข้อๆ ไม่เกิน 2 ข้อ)
 3.  **⚠️ ข้อควรระวัง (Cons):** (ลิสต์เป็นข้อๆ ไม่เกิน 2 ข้อ)
 4.  **🎯 แผนการเทรด (Plan):**
@@ -149,7 +146,7 @@ def send_telegram_message(text):
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
     try:
         response = requests.post(url, json=payload)
-        response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+        response.raise_for_status() 
     except requests.exceptions.RequestException as e:
         logging.error("🔴 Telegram API ERROR: %s", e)
 
@@ -162,8 +159,6 @@ def hello():
     logging.info("Health check successful.")
     return "Hello, Render! The webhook server is running."
 
-# This block is essential for running the app, especially in production environments
 if __name__ == '__main__':
-    # Use environment variable for port, with a default for local testing
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=False)
